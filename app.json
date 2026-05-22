@@ -1,29 +1,52 @@
 {
   "expo": {
-    "name": "OneTap-Mobile",
-    "slug": "OneTap-Mobile",
+    "name": "OneTap",
+    "slug": "onetap-mobile",
     "version": "1.0.0",
+    "sdkVersion": "54.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0F0A1E",
+    "android": {
+      "package": "com.onetap.mobile",
+      "softwareKeyboardLayoutMode": "pan",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "onetap"
+            },
+            {
+              "scheme": "https",
+              "host": "one-tap-ten.vercel.app",
+              "pathPrefix": "/view"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.onetap.mobile"
     },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true
+    "plugins": [
+      "expo-router",
+      "expo-document-picker"
+    ],
+    "scheme": "onetap",
+    "experiments": {
+      "typedRoutes": true
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e6d4198b-8795-43e5-bac3-e000e1148e26"
+      }
     }
   }
 }
