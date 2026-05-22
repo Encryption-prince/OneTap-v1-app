@@ -60,14 +60,6 @@ OneTap-Mobile/
 │       └── theme.js          # Colors, fonts, sizes
 ```
 
-## Backend API
-
-The app connects to: `https://respectable-jaclyn-koyebuser1-38d6aeac.koyeb.app/api`
-
-Endpoints used:
-- `GET /redis/usage` — check available storage
-- `POST /files/upload?expiryMinutes=N` — upload encrypted file
-- `GET /files/view/:fileId` — download encrypted file (one-time)
 
 ## How Encryption Works
 
@@ -80,8 +72,3 @@ Endpoints used:
 7. The decryption key is embedded in the shareable link as a URL fragment (`#key=...`)
 8. The server never sees the plaintext key — only the recipient with the full link can decrypt
 
-## Notes
-
-- PDF preview requires opening via the native share sheet (no in-app PDF renderer)
-- The `crypto.subtle` Web Crypto API is available in React Native via Hermes engine
-- `expo-document-picker` requires the `expo-document-picker` plugin in `app.json`

@@ -5,8 +5,14 @@ node_modules/
 
 # Expo
 .expo/
-.claude
 dist/
+
+# IDE & AI tools
+.claude/
+.kiro/
+.cursor/
+.vscode/
+.idea/
 web-build/
 expo-env.d.ts
 
