@@ -4,10 +4,16 @@
     "slug": "onetap-mobile",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
+    "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0F0A1E",
     "android": {
+      "icon": "./assets/icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F0A1E"
+      },
       "package": "com.onetap.mobile",
       "softwareKeyboardLayoutMode": "pan",
       "intentFilters": [
