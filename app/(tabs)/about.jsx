@@ -8,14 +8,12 @@ import { COLORS, SIZES, RADIUS } from '../../src/constants/theme';
 const TEAM = [
   {
     name: 'Subham Maity',
-    email: 'subhammaity6827@gmail.com',
-    contact: '8638026144',
     profession: 'Student',
     background: "B.Tech IT'26",
     college: 'Techno Main Salt Lake',
     initials: 'SM',
     color: '#7C3AED',
-    photo: require('../../assets/subham.jpg'),
+    photo: require('../../assets/subham.jpeg'),
     socials: {
       github: 'https://github.com/Encryption-prince',
       linkedin: 'https://linkedin.com/in/subham-maity-6196aa248',
@@ -23,8 +21,6 @@ const TEAM = [
   },
   {
     name: 'Supratim Das',
-    email: 'dassupratim57@gmail.com',
-    contact: '9474707901',
     profession: 'Student',
     background: "B.Tech IT'26",
     college: 'Techno Main Salt Lake',
@@ -191,9 +187,6 @@ const styles = StyleSheet.create({
   detailName: { color: COLORS.textPrimary, fontSize: SIZES.xl, fontWeight: '800', marginBottom: 4 },
   detailRole: { color: COLORS.lavender, fontSize: SIZES.sm, fontWeight: '600', marginBottom: 4 },
   detailCollege: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 20 },
-  detailRows: { width: '100%', gap: 10, marginBottom: 20 },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: RADIUS.md, padding: 12 },
-  detailValue: { color: COLORS.textSecondary, fontSize: SIZES.sm, flex: 1 },
   socialsRow: { flexDirection: 'row', gap: 12 },
   socialBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
   footer: { alignItems: 'center', paddingVertical: 8 },
