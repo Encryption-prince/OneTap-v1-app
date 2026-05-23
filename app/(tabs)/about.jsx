@@ -132,16 +132,6 @@ export default function AboutScreen() {
           <Text style={styles.detailName}>{profile.name}</Text>
           <Text style={styles.detailRole}>{profile.profession} · {profile.background}</Text>
           <Text style={styles.detailCollege}>{profile.college}</Text>
-          <View style={styles.detailRows}>
-            <View style={styles.detailRow}>
-              <Ionicons name="mail" size={16} color={COLORS.lavender} />
-              <Text style={styles.detailValue}>{profile.email}</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Ionicons name="call" size={16} color={COLORS.lavender} />
-              <Text style={styles.detailValue}>{profile.contact}</Text>
-            </View>
-          </View>
           <View style={styles.socialsRow}>
             {profile.socials.github && (
               <TouchableOpacity style={styles.socialBtn} onPress={() => openLink(profile.socials.github)}>

@@ -21,6 +21,7 @@ export default function TabsLayout() {
           let iconName;
           if (route.name === 'home') iconName = focused ? 'home' : 'home-outline';
           else if (route.name === 'upload') iconName = focused ? 'cloud-upload' : 'cloud-upload-outline';
+          else if (route.name === 'openlink') iconName = focused ? 'link' : 'link-outline';
           else if (route.name === 'about') iconName = focused ? 'people' : 'people-outline';
           return <Ionicons name={iconName} size={22} color={color} />;
         },
@@ -28,6 +29,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="home" options={{ title: 'Home' }} />
       <Tabs.Screen name="upload" options={{ title: 'Upload' }} />
+      <Tabs.Screen name="openlink" options={{ title: 'Open Link' }} />
       <Tabs.Screen name="about" options={{ title: 'About' }} />
     </Tabs>
   );

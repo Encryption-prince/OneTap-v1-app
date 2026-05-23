@@ -11,12 +11,12 @@ import { COLORS, SIZES, RADIUS } from '../../src/constants/theme';
 
 const { width } = Dimensions.get('window');
 
-// All 4 quick-action tiles now navigate to upload
+// Quick actions — Picture, Video, PDF, Audio all go to upload
 const QUICK_ACTIONS = [
   { icon: 'image', label: 'Picture', color: '#EC4899', bg: 'rgba(236,72,153,0.15)', desc: 'Share an image' },
   { icon: 'videocam', label: 'Video', color: '#F97316', bg: 'rgba(249,115,22,0.15)', desc: 'Share a video' },
-  { icon: 'document-text', label: 'My File', color: '#06B6D4', bg: 'rgba(6,182,212,0.15)', desc: 'Share any file' },
-  { icon: 'link', label: 'Open Link', color: '#10B981', bg: 'rgba(16,185,129,0.15)', desc: 'View a shared file' },
+  { icon: 'document-text', label: 'PDF', color: '#06B6D4', bg: 'rgba(6,182,212,0.15)', desc: 'Share a PDF' },
+  { icon: 'musical-notes', label: 'Audio', color: '#10B981', bg: 'rgba(16,185,129,0.15)', desc: 'Share audio' },
 ];
 
 // How it works steps — replaces fake "recent files"
@@ -46,12 +46,8 @@ export default function HomeScreen() {
   };
 
   const handleQuickAction = (action) => {
-    if (action.label === 'Open Link') {
-      openModal();
-    } else {
-      // Picture, Video, My File — all go to upload
-      router.push('/(tabs)/upload');
-    }
+    // All quick actions go to upload
+    router.push('/(tabs)/upload');
   };
 
   const handleOpenLink = () => {
@@ -87,25 +83,28 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Hero Banner — replaces "Cloud Storage" */}
-        <LinearGradient
-          colors={['#5B21B6', '#7C3AED', '#9D5CF6']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.banner}
-        >
-          <View style={styles.bannerLeft}>
-            <View style={styles.bannerIconBg}>
-              <Ionicons name="shield-checkmark" size={28} color="#fff" />
+        {/* Hero Banner — tappable, navigates to encryption explainer */}
+        <TouchableOpacity onPress={() => router.push('/encryption')} activeOpacity={0.85}>
+          <LinearGradient
+            colors={['#5B21B6', '#7C3AED', '#9D5CF6']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.banner}
+          >
+            <View style={styles.bannerLeft}>
+              <View style={styles.bannerIconBg}>
+                <Ionicons name="shield-checkmark" size={28} color="#fff" />
+              </View>
+              <View style={styles.bannerTextBlock}>
+                <Text style={styles.bannerTitle}>End-to-End Encrypted</Text>
+                <Text style={styles.bannerSub}>Files never leave your device unencrypted</Text>
+              </View>
             </View>
-            <View style={styles.bannerTextBlock}>
-              <Text style={styles.bannerTitle}>End-to-End Encrypted</Text>
-              <Text style={styles.bannerSub}>Files never leave your device unencrypted</Text>
-            </View>
-          </View>
-          <View style={styles.bannerCircle1} />
-          <View style={styles.bannerCircle2} />
-        </LinearGradient>
+            <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
+            <View style={styles.bannerCircle1} />
+            <View style={styles.bannerCircle2} />
+          </LinearGradient>
+        </TouchableOpacity>
 
         {/* Quick Actions */}
         <Text style={styles.sectionTitle}>Quick Actions</Text>
