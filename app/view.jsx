@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   ScrollView, Image, Dimensions,
@@ -11,6 +11,8 @@ import * as ScreenCapture from 'expo-screen-capture';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import Toast from 'react-native-toast-message';
+import { Video, Audio, ResizeMode } from 'expo-av';
+import { WebView } from 'react-native-webview';
 import { COLORS, SIZES, RADIUS } from '../src/constants/theme';
 import apiService from '../src/services/api';
 import { decryptData } from '../src/utils/encryption';
@@ -19,7 +21,16 @@ const { height } = Dimensions.get('window');
 
 const getMimeType = (filename) => {
   const ext = (filename || '').split('.').pop().toLowerCase();
-  const map = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf', txt: 'text/plain', md: 'text/plain' };
+  const map = {
+    // images
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    // documents
+    pdf: 'application/pdf', txt: 'text/plain', md: 'text/plain',
+    // video
+    mp4: 'video/mp4', mov: 'video/quicktime', mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo',
+    // audio
+    mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac', ogg: 'audio/ogg', m4a: 'audio/mp4', flac: 'audio/flac',
+  };
   return map[ext] || 'application/octet-stream';
 };
 
@@ -49,11 +60,17 @@ export default function ViewScreen() {
   const [textContent, setTextContent] = useState('');
   const [timeLeft, setTimeLeft] = useState(null);
 
+  // Audio player state
+  const [sound, setSound] = useState(null);
+  const [audioStatus, setAudioStatus] = useState({ isPlaying: false, positionMillis: 0, durationMillis: 0 });
+  const videoRef = useRef(null);
+
   useEffect(() => {
     return () => {
       if (fileInfo?.localUri) FileSystem.deleteAsync(fileInfo.localUri, { idempotent: true }).catch(() => {});
+      if (sound) sound.unloadAsync().catch(() => {});
     };
-  }, [fileInfo]);
+  }, [fileInfo, sound]);
 
   // Prevent screenshots while viewing a file
   useEffect(() => {
@@ -150,12 +167,50 @@ export default function ViewScreen() {
     else Toast.show({ type: 'error', text1: 'Sharing not available on this device' });
   };
 
+  // Audio controls
+  const handleAudioPlayPause = async () => {
+    if (!fileInfo?.localUri) return;
+    if (!sound) {
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: fileInfo.localUri },
+        { shouldPlay: true },
+        (s) => setAudioStatus(s)
+      );
+      setSound(newSound);
+    } else {
+      if (audioStatus.isPlaying) await sound.pauseAsync();
+      else await sound.playAsync();
+    }
+  };
+
+  const handleAudioSeek = async (millis) => {
+    if (sound) await sound.setPositionAsync(millis);
+  };
+
+  const formatTime = (millis) => {
+    if (!millis) return '0:00';
+    const secs = Math.floor(millis / 1000);
+    const mins = Math.floor(secs / 60);
+    return `${mins}:${String(secs % 60).padStart(2, '0')}`;
+  };
+
   const renderPreview = () => {
     if (!fileInfo) return null;
     const { mimeType, localUri } = fileInfo;
+
+    // Image
     if (mimeType.startsWith('image/')) {
-      return <Image source={{ uri: localUri }} style={styles.previewImage} resizeMode="contain" />;
+      return (
+        <Image
+          source={{ uri: localUri }}
+          style={styles.previewImage}
+          resizeMode="contain"
+        />
+      );
     }
+
+    // Text
     if (mimeType.startsWith('text/')) {
       return (
         <ScrollView style={styles.textPreview}>
@@ -163,6 +218,116 @@ export default function ViewScreen() {
         </ScrollView>
       );
     }
+
+    // Video
+    if (mimeType.startsWith('video/')) {
+      return (
+        <View style={styles.videoContainer}>
+          <Video
+            ref={videoRef}
+            source={{ uri: localUri }}
+            style={styles.video}
+            resizeMode={ResizeMode.CONTAIN}
+            useNativeControls
+            shouldPlay={false}
+            isLooping={false}
+          />
+          <View style={styles.securityBadge}>
+            <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
+            <Text style={styles.securityBadgeText}>Secure playback — recording blocked</Text>
+          </View>
+        </View>
+      );
+    }
+
+    // Audio
+    if (mimeType.startsWith('audio/')) {
+      const progress = audioStatus.durationMillis
+        ? audioStatus.positionMillis / audioStatus.durationMillis
+        : 0;
+      return (
+        <View style={styles.audioContainer}>
+          <LinearGradient
+            colors={['rgba(124,58,237,0.2)', 'rgba(139,92,246,0.05)']}
+            style={styles.audioCard}
+          >
+            <View style={styles.audioIconBg}>
+              <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} style={styles.audioIconGrad}>
+                <Ionicons name="musical-notes" size={40} color="#fff" />
+              </LinearGradient>
+            </View>
+            <Text style={styles.audioFilename} numberOfLines={2}>{fileInfo.filename}</Text>
+
+            {/* Progress bar */}
+            <View style={styles.progressBarBg}>
+              <View style={[styles.progressBarFill, { width: `${progress * 100}%` }]} />
+            </View>
+            <View style={styles.audioTimeRow}>
+              <Text style={styles.audioTime}>{formatTime(audioStatus.positionMillis)}</Text>
+              <Text style={styles.audioTime}>{formatTime(audioStatus.durationMillis)}</Text>
+            </View>
+
+            {/* Play/Pause */}
+            <TouchableOpacity onPress={handleAudioPlayPause} style={styles.audioPlayBtn} activeOpacity={0.8}>
+              <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} style={styles.audioPlayGrad}>
+                <Ionicons
+                  name={audioStatus.isPlaying ? 'pause' : 'play'}
+                  size={32}
+                  color="#fff"
+                />
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <View style={styles.securityBadge}>
+              <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
+              <Text style={styles.securityBadgeText}>Secure playback — recording blocked</Text>
+            </View>
+          </LinearGradient>
+        </View>
+      );
+    }
+
+    // PDF
+    if (mimeType === 'application/pdf') {
+      // Render PDF via WebView using base64 data URI
+      const pdfHtml = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body { background: #0F0A1E; width: 100%; height: 100vh; overflow: hidden; }
+              embed { width: 100%; height: 100vh; }
+            </style>
+          </head>
+          <body>
+            <embed src="${localUri}" type="application/pdf" width="100%" height="100%" />
+          </body>
+        </html>
+      `;
+      return (
+        <View style={styles.pdfContainer}>
+          <WebView
+            source={{ uri: localUri }}
+            style={styles.pdfWebView}
+            originWhitelist={['*']}
+            allowFileAccess={true}
+            allowFileAccessFromFileURLs={true}
+            allowUniversalAccessFromFileURLs={true}
+            onLongPress={() => {}}
+            contextMenuHidden={true}
+            allowsLinkPreview={false}
+          />
+          <View style={styles.securityBadge}>
+            <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
+            <Text style={styles.securityBadgeText}>Secure view — download blocked</Text>
+          </View>
+        </View>
+      );
+    }
+
+    // Unsupported
     return (
       <View style={styles.unsupportedPreview}>
         <Ionicons name="document" size={64} color={COLORS.lavender} />
@@ -286,6 +451,27 @@ const styles = StyleSheet.create({
   previewImage: { width: '100%', height: height * 0.7 },
   textPreview: { flex: 1, padding: 16 },
   textContent: { color: COLORS.textSecondary, fontSize: SIZES.sm, lineHeight: 22 },
+  // Video
+  videoContainer: { flex: 1, backgroundColor: '#000' },
+  video: { width: '100%', height: height * 0.45 },
+  // Audio
+  audioContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  audioCard: { width: '100%', borderRadius: RADIUS.xxl, borderWidth: 1, borderColor: COLORS.border, padding: 32, alignItems: 'center', gap: 16 },
+  audioIconBg: { shadowColor: COLORS.purple, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 16, elevation: 8 },
+  audioIconGrad: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center' },
+  audioFilename: { color: COLORS.textPrimary, fontSize: SIZES.base, fontWeight: '700', textAlign: 'center' },
+  progressBarBg: { width: '100%', height: 4, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2 },
+  progressBarFill: { height: 4, backgroundColor: COLORS.purple, borderRadius: 2 },
+  audioTimeRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+  audioTime: { color: COLORS.textMuted, fontSize: SIZES.xs },
+  audioPlayBtn: { borderRadius: 40, overflow: 'hidden' },
+  audioPlayGrad: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
+  // PDF
+  pdfContainer: { flex: 1 },
+  pdfWebView: { flex: 1, backgroundColor: '#0F0A1E' },
+  // Security badge
+  securityBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(20,184,166,0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1, borderColor: 'rgba(20,184,166,0.25)', margin: 8 },
+  securityBadgeText: { color: COLORS.teal, fontSize: SIZES.xs, fontWeight: '600' },
   unsupportedPreview: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 12 },
   unsupportedTitle: { color: COLORS.textPrimary, fontSize: SIZES.lg, fontWeight: '700', textAlign: 'center' },
   unsupportedSub: { color: COLORS.textMuted, fontSize: SIZES.sm, textAlign: 'center' },
