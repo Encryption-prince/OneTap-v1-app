@@ -1,30 +1,83 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform,
+  View, Text, StyleSheet, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { COLORS, SIZES, RADIUS } from '../../src/constants/theme';
+import { resolveShortUrl, isShortUrl } from '../../src/utils/urlShortener';
 
 export default function OpenLinkScreen() {
   const insets = useSafeAreaInsets();
   const [linkInput, setLinkInput] = useState('');
+  const glowAnim = useRef(new Animated.Value(0)).current;
+  const shakeAnim = useRef(new Animated.Value(0)).current;
 
-  const handleOpenLink = () => {
-    if (!linkInput.trim()) return;
+  const isValidLink = (val) => {
+    const trimmed = val.trim();
+    return isShortUrl(trimmed) || trimmed.startsWith('https://one-tap-ten.vercel.app');
+  };
+
+  const isValid = isValidLink(linkInput);
+  const hasInput = linkInput.trim().length > 0;
+
+  // Glow in when valid, glow out when not
+  useEffect(() => {
+    Animated.timing(glowAnim, {
+      toValue: isValid ? 1 : 0,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  }, [isValid]);
+
+  const shakeInput = () => {
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const borderColor = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [COLORS.border || 'rgba(255,255,255,0.12)', '#14B8A6'],
+  });
+
+  const shadowOpacity = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 0.6],
+  });
+
+  const handleOpenLink = async () => {
+    const trimmed = linkInput.trim();
+    if (!trimmed) { shakeInput(); return; }
+
+    // Resolve short URL first
+    let url = trimmed;
+    if (isShortUrl(trimmed)) {
+      const resolved = await resolveShortUrl(trimmed);
+      if (!resolved) {
+        shakeInput();
+        return;
+      }
+      url = resolved;
+    }
+
     try {
-      const url = new URL(linkInput.trim());
-      const pathParts = url.pathname.split('/');
+      const parsed = new URL(url);
+      const pathParts = parsed.pathname.split('/');
       const fileId = pathParts[pathParts.length - 1];
-      const hash = url.hash.substring(1);
+      const hash = parsed.hash.substring(1);
       const params = new URLSearchParams(hash);
       const key = params.get('key') || '';
       const filename = decodeURIComponent(params.get('filename') || 'file');
       router.push({ pathname: '/view', params: { fileId, key, filename } });
     } catch {
-      router.push({ pathname: '/view', params: { rawLink: linkInput.trim() } });
+      router.push({ pathname: '/view', params: { rawLink: url } });
     }
   };
 
@@ -56,8 +109,17 @@ export default function OpenLinkScreen() {
           </Text>
 
           {/* Input */}
-          <View style={styles.inputRow}>
-            <Ionicons name="link-outline" size={18} color={COLORS.textMuted} style={{ marginRight: 8 }} />
+          <Animated.View style={[
+            styles.inputRow,
+            { borderColor, transform: [{ translateX: shakeAnim }] },
+            isValid && { shadowColor: '#14B8A6', shadowOffset: { width: 0, height: 0 }, shadowRadius: 8, shadowOpacity, elevation: 4 },
+          ]}>
+            <Ionicons
+              name={isValid ? 'checkmark-circle' : 'link-outline'}
+              size={18}
+              color={isValid ? COLORS.teal : COLORS.textMuted}
+              style={{ marginRight: 8 }}
+            />
             <TextInput
               style={styles.input}
               placeholder="https://one-tap-ten.vercel.app/view/..."
@@ -73,14 +135,13 @@ export default function OpenLinkScreen() {
                 <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
               </TouchableOpacity>
             )}
-          </View>
+          </Animated.View>
 
           {/* Open button */}
           <TouchableOpacity
             onPress={handleOpenLink}
             activeOpacity={0.85}
             style={[styles.openBtnWrap, !linkInput.trim() && { opacity: 0.5 }]}
-            disabled={!linkInput.trim()}
           >
             <LinearGradient
               colors={[COLORS.purple, COLORS.purpleLight]}

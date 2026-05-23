@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator,
+  TextInput, Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +13,7 @@ import Toast from 'react-native-toast-message';
 import { COLORS, SIZES, RADIUS } from '../../src/constants/theme';
 import apiService from '../../src/services/api';
 import { encryptData, arrayBufferToBase64Url } from '../../src/utils/encryption';
+import { shortenUrl, resolveShortUrl, isShortUrl } from '../../src/utils/urlShortener';
 
 const EXPIRY_UNITS = ['minutes', 'hours', 'days'];
 
@@ -23,18 +24,14 @@ const formatFileSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
-// Decode base64 string to Uint8Array without using atob (which can fail on large strings)
 const base64ToUint8Array = (base64) => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const lookup = new Uint8Array(256);
   for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
-
-  // Remove padding
   const clean = base64.replace(/[^A-Za-z0-9+/]/g, '');
   const len = Math.floor(clean.length * 3 / 4);
   const bytes = new Uint8Array(len);
   let byteIndex = 0;
-
   for (let i = 0; i < clean.length; i += 4) {
     const a = lookup[clean.charCodeAt(i)];
     const b = lookup[clean.charCodeAt(i + 1)];
@@ -47,145 +44,165 @@ const base64ToUint8Array = (base64) => {
   return bytes.slice(0, byteIndex);
 };
 
+// Progress stages with their target % values
+const PROGRESS_STAGES = [
+  { label: 'Reading file...', pct: 15 },
+  { label: 'Encrypting file...', pct: 55 },
+  { label: 'Preparing upload...', pct: 72 },
+  { label: 'Uploading...', pct: 92 },
+  { label: 'Finalizing...', pct: 100 },
+];
+
 export default function UploadScreen() {
   const insets = useSafeAreaInsets();
   const [selectedFile, setSelectedFile] = useState(null);
   const [expiryValue, setExpiryValue] = useState('1');
   const [expiryUnit, setExpiryUnit] = useState('days');
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState('');
+  const [stageIndex, setStageIndex] = useState(0);
   const [generatedLink, setGeneratedLink] = useState(null);
+  const [shortLink, setShortLink] = useState(null);
+  const [showShort, setShowShort] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedShort, setCopiedShort] = useState(false);
+  const [isShorteningUrl, setIsShorteningUrl] = useState(false);
+
+  // Animated progress bar value 0–1
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  // Copy button scale for bounce feedback
+  const copyScale = useRef(new Animated.Value(1)).current;
+  const copyShortScale = useRef(new Animated.Value(1)).current;
+
+  const animateProgressTo = (pct) => {
+    Animated.timing(progressAnim, {
+      toValue: pct / 100,
+      duration: 400,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const advanceStage = (index) => {
+    setStageIndex(index);
+    animateProgressTo(PROGRESS_STAGES[index].pct);
+  };
+
+  const bounceCopy = (scaleRef, setCopiedFn) => {
+    setCopiedFn(true);
+    Animated.sequence([
+      Animated.spring(scaleRef, { toValue: 0.88, useNativeDriver: true, speed: 50 }),
+      Animated.spring(scaleRef, { toValue: 1.08, useNativeDriver: true, speed: 30 }),
+      Animated.spring(scaleRef, { toValue: 1, useNativeDriver: true, speed: 20 }),
+    ]).start();
+    setTimeout(() => setCopiedFn(false), 2500);
+  };
 
   const pickFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['image/*', 'application/pdf', 'text/*'],
+        type: ['image/*', 'application/pdf', 'text/*', 'video/*', 'audio/*'],
         copyToCacheDirectory: true,
       });
-
       if (result.canceled) return;
-
-      // Handle both old API (result.uri) and new API (result.assets[0])
-      let asset = null;
-      if (result.assets && result.assets.length > 0) {
-        asset = result.assets[0];
-      } else if (result.uri) {
-        // Legacy format
-        asset = { uri: result.uri, name: result.name, size: result.size, mimeType: result.mimeType };
-      }
-
-      if (!asset || !asset.uri) {
-        Toast.show({ type: 'error', text1: 'Could not read file', text2: 'No file URI found' });
-        return;
-      }
-
-      if (asset.size && asset.size > 100 * 1024 * 1024) {
-        Toast.show({ type: 'error', text1: 'File too large', text2: 'Max size is 100MB' });
-        return;
-      }
-
+      let asset = result.assets?.[0] || (result.uri ? { uri: result.uri, name: result.name, size: result.size, mimeType: result.mimeType } : null);
+      if (!asset?.uri) { Toast.show({ type: 'error', text1: 'Could not read file' }); return; }
+      if (asset.size && asset.size > 100 * 1024 * 1024) { Toast.show({ type: 'error', text1: 'File too large', text2: 'Max size is 100MB' }); return; }
       setSelectedFile(asset);
       setGeneratedLink(null);
+      setShortLink(null);
+      setShowShort(false);
       setCopied(false);
+      progressAnim.setValue(0);
     } catch (err) {
       Toast.show({ type: 'error', text1: 'Could not pick file', text2: err.message });
     }
   };
 
   const handleUpload = async () => {
-    if (!selectedFile || !selectedFile.uri) {
-      Toast.show({ type: 'error', text1: 'No file selected', text2: 'Please pick a file first' });
-      return;
-    }
-
+    if (!selectedFile?.uri) { Toast.show({ type: 'error', text1: 'No file selected' }); return; }
     const expVal = parseInt(expiryValue, 10);
-    if (!expVal || expVal <= 0) {
-      Toast.show({ type: 'error', text1: 'Invalid expiry', text2: 'Must be greater than 0' });
-      return;
-    }
+    if (!expVal || expVal <= 0) { Toast.show({ type: 'error', text1: 'Invalid expiry' }); return; }
 
     setIsUploading(true);
     setGeneratedLink(null);
+    setShortLink(null);
+    setShowShort(false);
+    progressAnim.setValue(0);
     let encryptedUri = null;
 
     try {
-      // 1. Read file as base64
-      setUploadStatus('Reading file...');
-      const base64Data = await FileSystem.readAsStringAsync(selectedFile.uri, {
-        encoding: 'base64',
-      });
+      advanceStage(0); // Reading file
+      const base64Data = await FileSystem.readAsStringAsync(selectedFile.uri, { encoding: 'base64' });
+      if (!base64Data) throw new Error('Failed to read file');
 
-      if (!base64Data) throw new Error('Failed to read file — empty data returned');
-
-      // 3. Convert base64 → Uint8Array (safe for large files)
-      setUploadStatus('Encrypting file...');
+      advanceStage(1); // Encrypting
       const fileBytes = base64ToUint8Array(base64Data);
       const arrayBuffer = fileBytes.buffer.slice(fileBytes.byteOffset, fileBytes.byteOffset + fileBytes.byteLength);
-
-      // 4. Encrypt
       const { encryptedBuffer, base64Key } = await encryptData(arrayBuffer);
 
-      // 5. Convert encrypted buffer back to base64 and write to cache
-      setUploadStatus('Preparing upload...');
+      advanceStage(2); // Preparing
       const encryptedBytes = new Uint8Array(encryptedBuffer);
-      // Build base64 in chunks to avoid stack overflow
       const CHUNK = 8192;
       let encBase64 = '';
       for (let i = 0; i < encryptedBytes.length; i += CHUNK) {
         encBase64 += String.fromCharCode(...encryptedBytes.subarray(i, i + CHUNK));
       }
       encBase64 = btoa(encBase64);
-
       encryptedUri = FileSystem.cacheDirectory + 'onetap_enc_' + Date.now();
-      await FileSystem.writeAsStringAsync(encryptedUri, encBase64, {
-        encoding: 'base64',
-      });
+      await FileSystem.writeAsStringAsync(encryptedUri, encBase64, { encoding: 'base64' });
 
-      // 6. Upload
-      setUploadStatus('Uploading...');
+      advanceStage(3); // Uploading
       const fileName = selectedFile.name || 'file';
       const mimeType = selectedFile.mimeType || 'application/octet-stream';
-
       const result = await apiService.uploadFile(encryptedUri, fileName, mimeType, expVal, expiryUnit);
       if (!result.success) throw new Error(result.error || 'Upload failed');
 
-      // 7. Build shareable link
+      advanceStage(4); // Finalizing
       const encodedFilename = encodeURIComponent(fileName);
       const frontendUrl = `https://one-tap-ten.vercel.app/view/${result.fileId}#key=${base64Key}&filename=${encodedFilename}`;
 
+      // Small delay so user sees 100%
+      await new Promise((r) => setTimeout(r, 500));
+
       setGeneratedLink({ url: frontendUrl, fileName });
       setSelectedFile(null);
-      Toast.show({ type: 'success', text1: 'Upload successful!', text2: 'Your secure link is ready' });
-
+      Toast.show({ type: 'success', text1: 'Link ready!', text2: 'Your secure link is generated' });
     } catch (err) {
-      console.error('Upload error:', err);
       Toast.show({ type: 'error', text1: 'Upload failed', text2: err.message });
+      progressAnim.setValue(0);
     } finally {
-      // Cleanup temp encrypted file
-      if (encryptedUri) {
-        FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => {});
-      }
+      if (encryptedUri) FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => {});
       setIsUploading(false);
-      setUploadStatus('');
+      setStageIndex(0);
     }
   };
 
-  const copyLink = async () => {
-    if (!generatedLink) return;
-    await Clipboard.setStringAsync(generatedLink.url);
-    setCopied(true);
+  const copyLink = async (url, scaleRef, setCopiedFn) => {
+    if (!url) return;
+    await Clipboard.setStringAsync(url);
+    bounceCopy(scaleRef, setCopiedFn);
     Toast.show({ type: 'success', text1: 'Copied!', text2: 'Link copied to clipboard' });
-    setTimeout(() => setCopied(false), 3000);
   };
+
+  const handleShortenUrl = async () => {
+    if (!generatedLink?.url) return;
+    setIsShorteningUrl(true);
+    try {
+      const short = await shortenUrl(generatedLink.url);
+      setShortLink(short);
+      setShowShort(true);
+    } catch {
+      Toast.show({ type: 'error', text1: 'Could not shorten URL' });
+    } finally {
+      setIsShorteningUrl(false);
+    }
+  };
+
+  const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  const currentStage = PROGRESS_STAGES[stageIndex] || PROGRESS_STAGES[0];
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Upload & Share</Text>
           <View style={styles.shieldBadge}>
@@ -195,24 +212,15 @@ export default function UploadScreen() {
         <Text style={styles.headerSub}>Files are encrypted end-to-end on your device</Text>
 
         {/* Drop Zone */}
-        <TouchableOpacity onPress={pickFile} activeOpacity={0.85} style={styles.dropZoneWrapper}>
-          <LinearGradient
-            colors={['rgba(124,58,237,0.12)', 'rgba(139,92,246,0.04)']}
-            style={styles.dropZone}
-          >
+        <TouchableOpacity onPress={pickFile} activeOpacity={0.85} style={styles.dropZoneWrapper} disabled={isUploading}>
+          <LinearGradient colors={['rgba(124,58,237,0.12)', 'rgba(139,92,246,0.04)']} style={styles.dropZone}>
             <View style={styles.uploadIconBg}>
               <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} style={styles.uploadIconGrad}>
                 <Ionicons name="cloud-upload" size={32} color="#fff" />
               </LinearGradient>
             </View>
-            <Text style={styles.dropTitle}>
-              {selectedFile ? selectedFile.name : 'Tap to select a file'}
-            </Text>
-            <Text style={styles.dropSub}>
-              {selectedFile
-                ? formatFileSize(selectedFile.size)
-                : 'Images, PDFs, text files · Max 100MB'}
-            </Text>
+            <Text style={styles.dropTitle}>{selectedFile ? selectedFile.name : 'Tap to select a file'}</Text>
+            <Text style={styles.dropSub}>{selectedFile ? formatFileSize(selectedFile.size) : 'Images, PDFs, video, audio · Max 100MB'}</Text>
             {selectedFile && (
               <View style={styles.fileSelectedBadge}>
                 <Ionicons name="checkmark-circle" size={16} color={COLORS.green} />
@@ -222,12 +230,10 @@ export default function UploadScreen() {
           </LinearGradient>
         </TouchableOpacity>
 
-        {/* Selected file card */}
-        {selectedFile && (
+        {/* File card */}
+        {selectedFile && !isUploading && (
           <View style={styles.fileCard}>
-            <View style={styles.fileCardIcon}>
-              <Ionicons name="document" size={22} color={COLORS.lavender} />
-            </View>
+            <View style={styles.fileCardIcon}><Ionicons name="document" size={22} color={COLORS.lavender} /></View>
             <View style={styles.fileCardInfo}>
               <Text style={styles.fileCardName} numberOfLines={1}>{selectedFile.name}</Text>
               <Text style={styles.fileCardSize}>{formatFileSize(selectedFile.size)}</Text>
@@ -239,31 +245,18 @@ export default function UploadScreen() {
         )}
 
         {/* Expiry */}
-        {selectedFile && (
+        {selectedFile && !isUploading && (
           <View style={styles.expirySection}>
             <View style={styles.expirySectionHeader}>
               <Ionicons name="time" size={18} color={COLORS.lavender} />
               <Text style={styles.expirySectionTitle}>Link Expires In</Text>
             </View>
             <View style={styles.expiryRow}>
-              <TextInput
-                style={styles.expiryInput}
-                value={expiryValue}
-                onChangeText={setExpiryValue}
-                keyboardType="numeric"
-                placeholderTextColor={COLORS.textMuted}
-                maxLength={4}
-              />
+              <TextInput style={styles.expiryInput} value={expiryValue} onChangeText={setExpiryValue} keyboardType="numeric" placeholderTextColor={COLORS.textMuted} maxLength={4} />
               <View style={styles.unitSelector}>
                 {EXPIRY_UNITS.map((unit) => (
-                  <TouchableOpacity
-                    key={unit}
-                    style={[styles.unitBtn, expiryUnit === unit && styles.unitBtnActive]}
-                    onPress={() => setExpiryUnit(unit)}
-                  >
-                    <Text style={[styles.unitText, expiryUnit === unit && styles.unitTextActive]}>
-                      {unit.charAt(0).toUpperCase() + unit.slice(1)}
-                    </Text>
+                  <TouchableOpacity key={unit} style={[styles.unitBtn, expiryUnit === unit && styles.unitBtnActive]} onPress={() => setExpiryUnit(unit)}>
+                    <Text style={[styles.unitText, expiryUnit === unit && styles.unitTextActive]}>{unit.charAt(0).toUpperCase() + unit.slice(1)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -272,61 +265,89 @@ export default function UploadScreen() {
         )}
 
         {/* Upload button */}
-        {selectedFile && (
-          <TouchableOpacity
-            onPress={handleUpload}
-            disabled={isUploading}
-            activeOpacity={0.85}
-            style={styles.uploadBtnWrapper}
-          >
-            <LinearGradient
-              colors={isUploading ? ['#4B5563', '#374151'] : [COLORS.purple, COLORS.purpleLight]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.uploadBtn}
-            >
-              {isUploading ? (
-                <View style={styles.row}>
-                  <ActivityIndicator color="#fff" size="small" />
-                  <Text style={styles.uploadBtnText}>{uploadStatus || 'Processing...'}</Text>
-                </View>
-              ) : (
-                <View style={styles.row}>
-                  <Ionicons name="lock-closed" size={18} color="#fff" />
-                  <Text style={styles.uploadBtnText}>Generate Secure Link</Text>
-                </View>
-              )}
+        {selectedFile && !isUploading && (
+          <TouchableOpacity onPress={handleUpload} activeOpacity={0.85} style={styles.uploadBtnWrapper}>
+            <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.uploadBtn}>
+              <Ionicons name="lock-closed" size={18} color="#fff" />
+              <Text style={styles.uploadBtnText}>Generate Secure Link</Text>
             </LinearGradient>
           </TouchableOpacity>
+        )}
+
+        {/* Progress bar while uploading */}
+        {isUploading && (
+          <View style={styles.progressSection}>
+            <View style={styles.progressHeader}>
+              <Text style={styles.progressLabel}>{currentStage.label}</Text>
+              <Animated.Text style={styles.progressPct}>
+                {currentStage.pct}%
+              </Animated.Text>
+            </View>
+            <View style={styles.progressTrack}>
+              <Animated.View style={[styles.progressFill, { width: progressWidth }]}>
+                <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFill} />
+              </Animated.View>
+            </View>
+            <Text style={styles.progressSub}>Please keep the app open</Text>
+          </View>
         )}
 
         {/* Generated link */}
         {generatedLink && (
           <View style={styles.linkSection}>
-            <View style={styles.row}>
+            <View style={styles.linkHeader}>
               <Ionicons name="checkmark-circle" size={20} color={COLORS.green} />
               <Text style={styles.linkHeaderText}>Secure Link Generated</Text>
             </View>
             <Text style={styles.linkFileName} numberOfLines={1}>{generatedLink.fileName}</Text>
-            <View style={styles.linkBox}>
-              <Text style={styles.linkUrl} numberOfLines={3}>{generatedLink.url}</Text>
+
+            {/* Toggle full / short */}
+            <View style={styles.linkToggleRow}>
+              <TouchableOpacity style={[styles.linkToggleBtn, !showShort && styles.linkToggleBtnActive]} onPress={() => setShowShort(false)}>
+                <Text style={[styles.linkToggleText, !showShort && styles.linkToggleTextActive]}>Full URL</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.linkToggleBtn, showShort && styles.linkToggleBtnActive]} onPress={() => { if (!shortLink) handleShortenUrl(); else setShowShort(true); }}>
+                {isShorteningUrl
+                  ? <Text style={styles.linkToggleText}>Shortening...</Text>
+                  : <Text style={[styles.linkToggleText, showShort && styles.linkToggleTextActive]}>Short URL</Text>}
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={copyLink} activeOpacity={0.85}>
-              <LinearGradient
-                colors={copied ? [COLORS.green, '#059669'] : [COLORS.purple, COLORS.purpleLight]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.copyBtn}
+
+            <View style={styles.linkBox}>
+              <Text style={styles.linkUrl} numberOfLines={showShort ? 1 : 3} selectable>
+                {showShort && shortLink ? shortLink : generatedLink.url}
+              </Text>
+            </View>
+
+            {/* Copy button with bounce */}
+            <Animated.View style={[styles.copyBtnWrapper, { transform: [{ scale: showShort ? copyShortScale : copyScale }] }]}>
+              <TouchableOpacity
+                onPress={() => showShort
+                  ? copyLink(shortLink, copyShortScale, setCopiedShort)
+                  : copyLink(generatedLink.url, copyScale, setCopied)}
+                activeOpacity={0.85}
               >
-                <Ionicons name={copied ? 'checkmark' : 'copy'} size={18} color="#fff" />
-                <Text style={styles.copyBtnText}>{copied ? 'Copied!' : 'Copy Link'}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={(showShort ? copiedShort : copied) ? [COLORS.green, '#059669'] : [COLORS.purple, COLORS.purpleLight]}
+                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                  style={styles.copyBtn}
+                >
+                  <Ionicons name={(showShort ? copiedShort : copied) ? 'checkmark-circle' : 'copy'} size={18} color="#fff" />
+                  <Text style={styles.copyBtnText}>{(showShort ? copiedShort : copied) ? 'Copied!' : 'Copy Link'}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </Animated.View>
+
+            {showShort && shortLink && (
+              <View style={styles.shortNoteBox}>
+                <Ionicons name="information-circle" size={15} color={COLORS.lavender} />
+                <Text style={styles.shortNoteText}>Short URLs only work on devices where this app is installed. Share the full URL for recipients without the app.</Text>
+              </View>
+            )}
+
             <View style={styles.warningBox}>
               <Ionicons name="warning" size={20} color={COLORS.yellow} />
-              <Text style={styles.warningText}>
-                Keep this link safe! It contains the decryption key. Without it, the file cannot be recovered.
-              </Text>
+              <Text style={styles.warningText}>Keep this link safe — it contains the decryption key. Without it, the file cannot be recovered.</Text>
             </View>
           </View>
         )}
@@ -341,9 +362,7 @@ export default function UploadScreen() {
             { icon: 'trash', text: 'Encrypted files are permanently deleted from servers' },
           ].map((item, i) => (
             <View key={i} style={styles.howRow}>
-              <View style={styles.howIconBg}>
-                <Ionicons name={item.icon} size={16} color={COLORS.lavender} />
-              </View>
+              <View style={styles.howIconBg}><Ionicons name={item.icon} size={16} color={COLORS.lavender} /></View>
               <Text style={styles.howText}>{item.text}</Text>
             </View>
           ))}
@@ -386,16 +405,33 @@ const styles = StyleSheet.create({
   unitText: { color: COLORS.textMuted, fontSize: SIZES.xs, fontWeight: '600' },
   unitTextActive: { color: '#fff' },
   uploadBtnWrapper: { borderRadius: RADIUS.lg, overflow: 'hidden', marginBottom: 24 },
-  uploadBtn: { paddingVertical: 16, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  uploadBtn: { paddingVertical: 16, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 10 },
   uploadBtnText: { color: '#fff', fontSize: SIZES.base, fontWeight: '700' },
+  // Progress
+  progressSection: { backgroundColor: 'rgba(124,58,237,0.1)', borderRadius: RADIUS.xl, padding: 20, borderWidth: 1, borderColor: 'rgba(124,58,237,0.3)', marginBottom: 24 },
+  progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  progressLabel: { color: COLORS.textPrimary, fontSize: SIZES.sm, fontWeight: '600' },
+  progressPct: { color: COLORS.lavender, fontSize: SIZES.sm, fontWeight: '800' },
+  progressTrack: { height: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 4, overflow: 'hidden', marginBottom: 10 },
+  progressFill: { height: 8, borderRadius: 4 },
+  progressSub: { color: COLORS.textMuted, fontSize: SIZES.xs, textAlign: 'center' },
+  // Link section
   linkSection: { backgroundColor: 'rgba(16,185,129,0.08)', borderRadius: RADIUS.xl, padding: 20, borderWidth: 1, borderColor: 'rgba(16,185,129,0.25)', marginBottom: 24 },
-  linkHeaderText: { color: COLORS.green, fontSize: SIZES.base, fontWeight: '700', marginLeft: 8 },
-  linkFileName: { color: COLORS.textSecondary, fontSize: SIZES.sm, marginBottom: 12, marginTop: 8 },
+  linkHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  linkHeaderText: { color: COLORS.green, fontSize: SIZES.base, fontWeight: '700' },
+  linkFileName: { color: COLORS.textSecondary, fontSize: SIZES.sm, marginBottom: 14 },
+  linkToggleRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  linkToggleBtn: { flex: 1, paddingVertical: 8, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center' },
+  linkToggleBtnActive: { backgroundColor: 'rgba(124,58,237,0.25)', borderColor: COLORS.purple },
+  linkToggleText: { color: COLORS.textMuted, fontSize: SIZES.xs, fontWeight: '600' },
+  linkToggleTextActive: { color: COLORS.lavender },
   linkBox: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   linkUrl: { color: COLORS.textSecondary, fontSize: SIZES.xs, lineHeight: 18 },
-  copyBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: RADIUS.md, marginBottom: 16 },
+  copyBtnWrapper: { marginBottom: 12 },
+  copyBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: RADIUS.md },
   copyBtnText: { color: '#fff', fontSize: SIZES.base, fontWeight: '700' },
+  shortNoteBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: 'rgba(167,139,250,0.08)', borderRadius: RADIUS.md, padding: 10, borderWidth: 1, borderColor: 'rgba(167,139,250,0.2)', marginBottom: 12 },
+  shortNoteText: { color: COLORS.textMuted, fontSize: SIZES.xs, flex: 1, lineHeight: 17 },
   warningBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: RADIUS.md, padding: 12, borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)' },
   warningText: { color: COLORS.yellow, fontSize: SIZES.xs, flex: 1, lineHeight: 18 },
   howItWorks: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: RADIUS.lg, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
