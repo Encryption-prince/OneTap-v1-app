@@ -19,6 +19,66 @@ import { decryptData } from '../src/utils/encryption';
 
 const { height } = Dimensions.get('window');
 
+// PDF viewer — uploads to Google Docs Viewer via base64 data URI embedded in HTML
+// This is the most reliable approach for Android WebView
+function PdfViewer({ localUri }) {
+  const [pdfHtml, setPdfHtml] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #0F0A1E; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+  </style>
+</head>
+<body>
+  <iframe src="data:application/pdf;base64,${base64}"></iframe>
+</body>
+</html>`;
+        setPdfHtml(html);
+      } catch (e) {
+        setPdfHtml('<html><body style="background:#0F0A1E;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><p>Could not load PDF</p></body></html>');
+      }
+    })();
+  }, [localUri]);
+
+  if (!pdfHtml) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F0A1E' }}>
+        <ActivityIndicator color="#A78BFA" size="large" />
+        <Text style={{ color: '#A78BFA', marginTop: 12, fontSize: 14 }}>Loading PDF...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.pdfContainer}>
+      <WebView
+        source={{ html: pdfHtml }}
+        style={styles.pdfWebView}
+        originWhitelist={['*']}
+        contextMenuHidden={true}
+        allowsLinkPreview={false}
+        scrollEnabled={true}
+        javaScriptEnabled={true}
+      />
+      <View style={styles.securityBadge}>
+        <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
+        <Text style={styles.securityBadgeText}>Secure view — download blocked</Text>
+      </View>
+    </View>
+  );
+}
+
 const getMimeType = (filename) => {
   const ext = (filename || '').split('.').pop().toLowerCase();
   const map = {
@@ -170,17 +230,30 @@ export default function ViewScreen() {
   // Audio controls
   const handleAudioPlayPause = async () => {
     if (!fileInfo?.localUri) return;
-    if (!sound) {
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: fileInfo.localUri },
-        { shouldPlay: true },
-        (s) => setAudioStatus(s)
-      );
-      setSound(newSound);
-    } else {
-      if (audioStatus.isPlaying) await sound.pauseAsync();
-      else await sound.playAsync();
+    try {
+      if (!sound) {
+        // Must set audio mode before creating sound on Android
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+        const { sound: newSound } = await Audio.Sound.createAsync(
+          { uri: fileInfo.localUri },
+          { shouldPlay: true, progressUpdateIntervalMillis: 500 },
+        );
+        newSound.setOnPlaybackStatusUpdate((s) => {
+          if (s.isLoaded) setAudioStatus(s);
+        });
+        setSound(newSound);
+      } else {
+        if (audioStatus.isPlaying) await sound.pauseAsync();
+        else await sound.playAsync();
+      }
+    } catch (err) {
+      Toast.show({ type: 'error', text1: 'Playback error', text2: err.message });
     }
   };
 
@@ -231,6 +304,8 @@ export default function ViewScreen() {
             useNativeControls
             shouldPlay={false}
             isLooping={false}
+            onError={(err) => Toast.show({ type: 'error', text1: 'Video error', text2: String(err) })}
+            onLoad={() => {}}
           />
           <View style={styles.securityBadge}>
             <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
@@ -287,44 +362,9 @@ export default function ViewScreen() {
       );
     }
 
-    // PDF
+    // PDF — inject as base64 data URI inside WebView HTML (works on Android)
     if (mimeType === 'application/pdf') {
-      // Render PDF via WebView using base64 data URI
-      const pdfHtml = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-              * { margin: 0; padding: 0; box-sizing: border-box; }
-              body { background: #0F0A1E; width: 100%; height: 100vh; overflow: hidden; }
-              embed { width: 100%; height: 100vh; }
-            </style>
-          </head>
-          <body>
-            <embed src="${localUri}" type="application/pdf" width="100%" height="100%" />
-          </body>
-        </html>
-      `;
-      return (
-        <View style={styles.pdfContainer}>
-          <WebView
-            source={{ uri: localUri }}
-            style={styles.pdfWebView}
-            originWhitelist={['*']}
-            allowFileAccess={true}
-            allowFileAccessFromFileURLs={true}
-            allowUniversalAccessFromFileURLs={true}
-            onLongPress={() => {}}
-            contextMenuHidden={true}
-            allowsLinkPreview={false}
-          />
-          <View style={styles.securityBadge}>
-            <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
-            <Text style={styles.securityBadgeText}>Secure view — download blocked</Text>
-          </View>
-        </View>
-      );
+      return <PdfViewer localUri={localUri} />;
     }
 
     // Unsupported
