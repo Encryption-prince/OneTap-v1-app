@@ -8,68 +8,57 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as ScreenCapture from 'expo-screen-capture';
-import * as IntentLauncher from 'expo-intent-launcher';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { Video, Audio, ResizeMode } from 'expo-av';
-import { WebView } from 'react-native-webview';
+import Pdf from 'react-native-pdf';
 import { COLORS, SIZES, RADIUS } from '../src/constants/theme';
 import apiService from '../src/services/api';
 import { decryptData } from '../src/utils/encryption';
 
-const { height } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
-// PDF viewer — opens the decrypted PDF in the device's native PDF viewer
-// Android WebView cannot render local PDF files reliably; native viewer is the correct approach
+// PDF viewer — renders inline using react-native-pdf (native module, works in dev build + EAS)
+// Screenshot is blocked by expo-screen-capture FLAG_SECURE since it renders inside the app
 function PdfViewer({ localUri, filename }) {
-  const [opening, setOpening] = useState(false);
-
-  const openNative = async () => {
-    setOpening(true);
-    try {
-      if (Platform.OS === 'android') {
-        // Get a content URI via FileSystem.getContentUriAsync for Android
-        const contentUri = await FileSystem.getContentUriAsync(localUri);
-        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-          data: contentUri,
-          flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-          type: 'application/pdf',
-        });
-      } else {
-        // iOS — use sharing sheet which includes PDF viewers
-        await Sharing.shareAsync(localUri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
-      }
-    } catch (err) {
-      Toast.show({ type: 'error', text1: 'Could not open PDF', text2: 'No PDF viewer found on device' });
-    } finally {
-      setOpening(false);
-    }
-  };
+  const [totalPages, setTotalPages] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [loadError, setLoadError] = useState(null);
 
   return (
     <View style={styles.pdfContainer}>
-      <LinearGradient colors={['rgba(124,58,237,0.2)', 'rgba(139,92,246,0.05)']} style={styles.pdfCard}>
-        <View style={styles.pdfIconBg}>
-          <LinearGradient colors={['#EF4444', '#DC2626']} style={styles.pdfIconGrad}>
-            <Ionicons name="document-text" size={40} color="#fff" />
-          </LinearGradient>
+      {/* Page indicator */}
+      {totalPages > 0 && (
+        <View style={styles.pdfPageBadge}>
+          <Text style={styles.pdfPageText}>{currentPage} / {totalPages}</Text>
         </View>
-        <Text style={styles.pdfFilename} numberOfLines={2}>{filename}</Text>
-        <Text style={styles.pdfSub}>PDF files open in your device's PDF viewer</Text>
-        <TouchableOpacity onPress={openNative} activeOpacity={0.85} style={styles.pdfOpenBtnWrap} disabled={opening}>
-          <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.pdfOpenBtn}>
-            {opening
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <><Ionicons name="open" size={18} color="#fff" /><Text style={styles.pdfOpenBtnText}>Open PDF</Text></>
-            }
-          </LinearGradient>
-        </TouchableOpacity>
-        <View style={styles.securityBadge}>
-          <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
-          <Text style={styles.securityBadgeText}>Decrypted locally — not uploaded anywhere</Text>
+      )}
+      <Pdf
+        source={{ uri: localUri, cache: false }}
+        style={styles.pdfViewer}
+        onLoadComplete={(pages) => setTotalPages(pages)}
+        onPageChanged={(page) => setCurrentPage(page)}
+        onError={(err) => setLoadError(String(err))}
+        enablePaging={false}
+        trustAllCerts={false}
+        renderActivityIndicator={() => (
+          <View style={{ alignItems: 'center', gap: 12 }}>
+            <ActivityIndicator color={COLORS.lavender} size="large" />
+            <Text style={{ color: COLORS.lavender, fontSize: SIZES.sm }}>Loading PDF...</Text>
+          </View>
+        )}
+      />
+      {loadError && (
+        <View style={styles.pdfErrorBox}>
+          <Ionicons name="warning" size={20} color={COLORS.yellow} />
+          <Text style={styles.pdfErrorText}>Could not render PDF: {loadError}</Text>
         </View>
-      </LinearGradient>
+      )}
+      <View style={styles.securityBadge}>
+        <Ionicons name="shield-checkmark" size={14} color={COLORS.teal} />
+        <Text style={styles.securityBadgeText}>Secure view — screenshot blocked</Text>
+      </View>
     </View>
   );
 }
@@ -502,15 +491,12 @@ const styles = StyleSheet.create({
   audioPlayBtn: { borderRadius: 40, overflow: 'hidden' },
   audioPlayGrad: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
   // PDF
-  pdfContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  pdfCard: { width: '100%', borderRadius: RADIUS.xxl, borderWidth: 1, borderColor: COLORS.border, padding: 32, alignItems: 'center', gap: 14 },
-  pdfIconBg: { shadowColor: '#EF4444', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 8 },
-  pdfIconGrad: { width: 88, height: 88, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
-  pdfFilename: { color: COLORS.textPrimary, fontSize: SIZES.base, fontWeight: '700', textAlign: 'center' },
-  pdfSub: { color: COLORS.textMuted, fontSize: SIZES.sm, textAlign: 'center', lineHeight: 20 },
-  pdfOpenBtnWrap: { width: '100%', borderRadius: RADIUS.lg, overflow: 'hidden' },
-  pdfOpenBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16, borderRadius: RADIUS.lg },
-  pdfOpenBtnText: { color: '#fff', fontSize: SIZES.base, fontWeight: '700' },
+  pdfContainer: { flex: 1 },
+  pdfViewer: { flex: 1, width, backgroundColor: COLORS.darkBg },
+  pdfPageBadge: { position: 'absolute', top: 10, right: 12, zIndex: 10, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4 },
+  pdfPageText: { color: '#fff', fontSize: SIZES.xs, fontWeight: '600' },
+  pdfErrorBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: RADIUS.md, padding: 12, margin: 12, borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)' },
+  pdfErrorText: { color: COLORS.yellow, fontSize: SIZES.xs, flex: 1 },
   pdfWebView: { flex: 1, backgroundColor: '#0F0A1E' },
   // Security badge
   securityBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(20,184,166,0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1, borderColor: 'rgba(20,184,166,0.25)', margin: 8 },
