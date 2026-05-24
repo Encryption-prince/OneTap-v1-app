@@ -68,8 +68,11 @@ const getMimeType = (filename) => {
   const map = {
     // images
     jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
-    // documents
+    // documents — office formats arrive as pdf after backend conversion
     pdf: 'application/pdf', txt: 'text/plain', md: 'text/plain',
+    docx: 'application/pdf', doc: 'application/pdf',
+    pptx: 'application/pdf', ppt: 'application/pdf',
+    xlsx: 'application/pdf', xls: 'application/pdf',
     // video
     mp4: 'video/mp4', mov: 'video/quicktime', mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo',
     // audio

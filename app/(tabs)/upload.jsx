@@ -99,7 +99,22 @@ export default function UploadScreen() {
   const pickFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['image/*', 'application/pdf', 'text/*', 'video/*', 'audio/*'],
+        type: [
+          'image/*',
+          'application/pdf',
+          'text/*',
+          'video/*',
+          'audio/*',
+          // Word
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/msword',
+          // PowerPoint
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'application/vnd.ms-powerpoint',
+          // Excel
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+        ],
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
@@ -220,7 +235,7 @@ export default function UploadScreen() {
               </LinearGradient>
             </View>
             <Text style={styles.dropTitle}>{selectedFile ? selectedFile.name : 'Tap to select a file'}</Text>
-            <Text style={styles.dropSub}>{selectedFile ? formatFileSize(selectedFile.size) : 'Images, PDFs, video, audio · Max 100MB'}</Text>
+            <Text style={styles.dropSub}>{selectedFile ? formatFileSize(selectedFile.size) : 'Images, PDF, video, audio, DOCX, PPTX, XLSX · Max 100MB'}</Text>
             {selectedFile && (
               <View style={styles.fileSelectedBadge}>
                 <Ionicons name="checkmark-circle" size={16} color={COLORS.green} />

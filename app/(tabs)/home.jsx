@@ -11,17 +11,20 @@ import { COLORS, SIZES, RADIUS } from '../../src/constants/theme';
 
 const { width } = Dimensions.get('window');
 
-// Quick actions — Picture, Video, PDF, Audio all go to upload
+// Quick actions — all navigate to upload screen
 const QUICK_ACTIONS = [
   { icon: 'image', label: 'Picture', color: '#EC4899', bg: 'rgba(236,72,153,0.15)', desc: 'Share an image' },
   { icon: 'videocam', label: 'Video', color: '#F97316', bg: 'rgba(249,115,22,0.15)', desc: 'Share a video' },
   { icon: 'document-text', label: 'PDF', color: '#06B6D4', bg: 'rgba(6,182,212,0.15)', desc: 'Share a PDF' },
   { icon: 'musical-notes', label: 'Audio', color: '#10B981', bg: 'rgba(16,185,129,0.15)', desc: 'Share audio' },
+  { icon: 'easel', label: 'PPT', color: '#F59E0B', bg: 'rgba(245,158,11,0.15)', desc: 'Share a presentation' },
+  { icon: 'reader', label: 'DOCX', color: '#7C3AED', bg: 'rgba(124,58,237,0.15)', desc: 'Share a document' },
+  { icon: 'grid', label: 'Excel', color: '#16A34A', bg: 'rgba(22,163,74,0.15)', desc: 'Share a spreadsheet' },
 ];
 
 // How it works steps — replaces fake "recent files"
 const HOW_IT_WORKS = [
-  { step: '1', icon: 'cloud-upload', title: 'Upload a File', desc: 'Pick any image, PDF or text file from your device. Max 100MB.', color: '#7C3AED' },
+  { step: '1', icon: 'cloud-upload', title: 'Upload a File', desc: 'Pick any image, video, audio, PDF or Office file (DOCX, PPTX, XLSX) from your device. Max 100MB.', color: '#7C3AED' },
   { step: '2', icon: 'lock-closed', title: 'Encrypted on Device', desc: 'AES-256-GCM encryption happens locally before anything leaves your phone.', color: '#EC4899' },
   { step: '3', icon: 'link', title: 'Get a Secure Link', desc: 'A one-time link is generated. The decryption key is embedded in the URL — the server never sees it.', color: '#06B6D4' },
   { step: '4', icon: 'timer', title: 'Link Expires', desc: 'After the first view or when the timer runs out, the file is permanently deleted from the server.', color: '#10B981' },
