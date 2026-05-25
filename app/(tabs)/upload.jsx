@@ -44,12 +44,18 @@ const base64ToUint8Array = (base64) => {
   return bytes.slice(0, byteIndex);
 };
 
-// Progress stages with their target % values
+const OFFICE_EXTENSIONS = new Set(['docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls']);
+
+const needsConversion = (filename) => {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  return OFFICE_EXTENSIONS.has(ext);
+};
 const PROGRESS_STAGES = [
-  { label: 'Reading file...', pct: 15 },
-  { label: 'Encrypting file...', pct: 55 },
-  { label: 'Preparing upload...', pct: 72 },
-  { label: 'Uploading...', pct: 92 },
+  { label: 'Reading file...', pct: 10 },
+  { label: 'Encrypting file...', pct: 40 },
+  { label: 'Preparing upload...', pct: 55 },
+  { label: 'Uploading...', pct: 75 },
+  { label: 'Converting document...', pct: 90 },
   { label: 'Finalizing...', pct: 100 },
 ];
 
@@ -171,14 +177,26 @@ export default function UploadScreen() {
       const result = await apiService.uploadFile(encryptedUri, fileName, mimeType, expVal, expiryUnit);
       if (!result.success) throw new Error(result.error || 'Upload failed');
 
-      advanceStage(4); // Finalizing
-      const encodedFilename = encodeURIComponent(fileName);
+      // If Office file, poll until backend conversion is done
+      if (needsConversion(fileName)) {
+        advanceStage(4); // Converting document
+        const convResult = await apiService.waitForConversion(result.fileId, (pct) => {
+          animateProgressTo(75 + Math.round(pct * 0.15)); // 75–90%
+        });
+        if (!convResult.success) throw new Error(convResult.error);
+      }
+
+      advanceStage(needsConversion(selectedFile.name || '') ? 5 : 4); // Finalizing
+      const displayName = needsConversion(fileName)
+        ? fileName.replace(/\.(docx|doc|pptx|ppt|xlsx|xls)$/i, '.pdf')
+        : fileName;
+      const encodedFilename = encodeURIComponent(displayName);
       const frontendUrl = `https://one-tap-ten.vercel.app/view/${result.fileId}#key=${base64Key}&filename=${encodedFilename}`;
 
       // Small delay so user sees 100%
       await new Promise((r) => setTimeout(r, 500));
 
-      setGeneratedLink({ url: frontendUrl, fileName });
+      setGeneratedLink({ url: frontendUrl, fileName: displayName });
       setSelectedFile(null);
       Toast.show({ type: 'success', text1: 'Link ready!', text2: 'Your secure link is generated' });
     } catch (err) {
