@@ -44,30 +44,6 @@ class ApiService {
     } catch (e) { return { success: false, error: e.message }; }
   }
 
-  /**
-   * Poll conversion status until READY or ERROR.
-   * Returns { success: true } when ready, { success: false, error } on failure.
-   */
-  async waitForConversion(fileId, onProgress, maxWaitMs = 120000) {
-    const interval = 2500;
-    const start = Date.now();
-    while (Date.now() - start < maxWaitMs) {
-      try {
-        const res = await fetch(`${this.baseURL}/files/status/${fileId}`);
-        const status = await res.text();
-        if (status === 'READY') return { success: true };
-        if (status === 'ERROR') return { success: false, error: 'Document conversion failed on server' };
-        if (status === 'NOT_FOUND') return { success: false, error: 'File not found' };
-        // Still CONVERTING — notify caller and wait
-        if (onProgress) onProgress(Math.min(90, Math.round(((Date.now() - start) / maxWaitMs) * 90)));
-      } catch (e) {
-        // Network hiccup — keep polling
-      }
-      await new Promise((r) => setTimeout(r, interval));
-    }
-    return { success: false, error: 'Conversion timed out. Please try again.' };
-  }
-
   async downloadFile(fileId) {
     try {
       const res = await fetch(`${this.baseURL}/files/view/${fileId}`);

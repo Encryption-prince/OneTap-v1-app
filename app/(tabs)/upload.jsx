@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Animated,
+  TextInput, Animated, Easing,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -44,20 +44,92 @@ const base64ToUint8Array = (base64) => {
   return bytes.slice(0, byteIndex);
 };
 
-const OFFICE_EXTENSIONS = new Set(['docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls']);
-
-const needsConversion = (filename) => {
-  const ext = (filename || '').split('.').pop().toLowerCase();
-  return OFFICE_EXTENSIONS.has(ext);
-};
-const PROGRESS_STAGES = [
-  { label: 'Reading file...', pct: 10 },
-  { label: 'Encrypting file...', pct: 40 },
-  { label: 'Preparing upload...', pct: 55 },
-  { label: 'Uploading...', pct: 75 },
-  { label: 'Converting document...', pct: 90 },
-  { label: 'Finalizing...', pct: 100 },
+// Funny captions that cycle every 3 seconds while uploading
+const LOADING_CAPTIONS = [
+  "Wrapping your file in 256-bit bubble wrap 🫧",
+  "Teaching your file to speak gibberish 🔐",
+  "Confusing hackers since 2024 😈",
+  "Your file is doing a quick disguise 🥸",
+  "Scrambling bits like eggs 🍳",
+  "Making your file unreadable to everyone (including us) 🙈",
+  "Applying military-grade invisibility cloak 🪄",
+  "Negotiating with the encryption gods ⚡",
+  "Your file is getting a new identity 🕵️",
+  "Almost there... probably 🤞",
+  "Turning your file into beautiful nonsense ✨",
+  "The NSA would be proud. Or annoyed. Either way 😅",
 ];
+
+function UploadingSpinner({ stageLabel }) {
+  const [captionIndex, setCaptionIndex] = useState(0);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const spinAnim = useRef(new Animated.Value(0)).current;
+
+  // Spin animation — continuous
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 1200,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, []);
+
+  // Caption cycling — fade out, swap, fade in every 3s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+      }).start(() => {
+        setCaptionIndex((i) => (i + 1) % LOADING_CAPTIONS.length);
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }).start();
+      });
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  return (
+    <View style={styles.spinnerSection}>
+      {/* Spinner ring */}
+      <View style={styles.spinnerRingOuter}>
+        <Animated.View style={[styles.spinnerRing, { transform: [{ rotate: spin }] }]}>
+          <LinearGradient
+            colors={[COLORS.purple, COLORS.purpleLight, 'transparent']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.spinnerGrad}
+          />
+        </Animated.View>
+        {/* Center icon */}
+        <View style={styles.spinnerCenter}>
+          <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} style={styles.spinnerCenterGrad}>
+            <Ionicons name="lock-closed" size={22} color="#fff" />
+          </LinearGradient>
+        </View>
+      </View>
+
+      {/* Stage label */}
+      <Text style={styles.spinnerStageLabel}>{stageLabel}</Text>
+
+      {/* Funny caption with fade */}
+      <Animated.Text style={[styles.spinnerCaption, { opacity: fadeAnim }]}>
+        {LOADING_CAPTIONS[captionIndex]}
+      </Animated.Text>
+
+      <Text style={styles.spinnerHint}>Please keep the app open</Text>
+    </View>
+  );
+}
 
 export default function UploadScreen() {
   const insets = useSafeAreaInsets();
@@ -65,7 +137,7 @@ export default function UploadScreen() {
   const [expiryValue, setExpiryValue] = useState('1');
   const [expiryUnit, setExpiryUnit] = useState('days');
   const [isUploading, setIsUploading] = useState(false);
-  const [stageIndex, setStageIndex] = useState(0);
+  const [stageLabel, setStageLabel] = useState('');
   const [generatedLink, setGeneratedLink] = useState(null);
   const [shortLink, setShortLink] = useState(null);
   const [showShort, setShowShort] = useState(false);
@@ -73,24 +145,9 @@ export default function UploadScreen() {
   const [copiedShort, setCopiedShort] = useState(false);
   const [isShorteningUrl, setIsShorteningUrl] = useState(false);
 
-  // Animated progress bar value 0–1
-  const progressAnim = useRef(new Animated.Value(0)).current;
   // Copy button scale for bounce feedback
   const copyScale = useRef(new Animated.Value(1)).current;
   const copyShortScale = useRef(new Animated.Value(1)).current;
-
-  const animateProgressTo = (pct) => {
-    Animated.timing(progressAnim, {
-      toValue: pct / 100,
-      duration: 400,
-      useNativeDriver: false,
-    }).start();
-  };
-
-  const advanceStage = (index) => {
-    setStageIndex(index);
-    animateProgressTo(PROGRESS_STAGES[index].pct);
-  };
 
   const bounceCopy = (scaleRef, setCopiedFn) => {
     setCopiedFn(true);
@@ -105,22 +162,7 @@ export default function UploadScreen() {
   const pickFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: [
-          'image/*',
-          'application/pdf',
-          'text/*',
-          'video/*',
-          'audio/*',
-          // Word
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'application/msword',
-          // PowerPoint
-          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          'application/vnd.ms-powerpoint',
-          // Excel
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'application/vnd.ms-excel',
-        ],
+        type: ['image/*', 'application/pdf', 'text/*', 'video/*', 'audio/*'],
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
@@ -132,7 +174,6 @@ export default function UploadScreen() {
       setShortLink(null);
       setShowShort(false);
       setCopied(false);
-      progressAnim.setValue(0);
     } catch (err) {
       Toast.show({ type: 'error', text1: 'Could not pick file', text2: err.message });
     }
@@ -147,20 +188,19 @@ export default function UploadScreen() {
     setGeneratedLink(null);
     setShortLink(null);
     setShowShort(false);
-    progressAnim.setValue(0);
     let encryptedUri = null;
 
     try {
-      advanceStage(0); // Reading file
+      setStageLabel('Reading file...');
       const base64Data = await FileSystem.readAsStringAsync(selectedFile.uri, { encoding: 'base64' });
       if (!base64Data) throw new Error('Failed to read file');
 
-      advanceStage(1); // Encrypting
+      setStageLabel('Encrypting file...');
       const fileBytes = base64ToUint8Array(base64Data);
       const arrayBuffer = fileBytes.buffer.slice(fileBytes.byteOffset, fileBytes.byteOffset + fileBytes.byteLength);
       const { encryptedBuffer, base64Key } = await encryptData(arrayBuffer);
 
-      advanceStage(2); // Preparing
+      setStageLabel('Preparing upload...');
       const encryptedBytes = new Uint8Array(encryptedBuffer);
       const CHUNK = 8192;
       let encBase64 = '';
@@ -171,41 +211,27 @@ export default function UploadScreen() {
       encryptedUri = FileSystem.cacheDirectory + 'onetap_enc_' + Date.now();
       await FileSystem.writeAsStringAsync(encryptedUri, encBase64, { encoding: 'base64' });
 
-      advanceStage(3); // Uploading
+      setStageLabel('Uploading...');
       const fileName = selectedFile.name || 'file';
       const mimeType = selectedFile.mimeType || 'application/octet-stream';
       const result = await apiService.uploadFile(encryptedUri, fileName, mimeType, expVal, expiryUnit);
       if (!result.success) throw new Error(result.error || 'Upload failed');
 
-      // If Office file, poll until backend conversion is done
-      if (needsConversion(fileName)) {
-        advanceStage(4); // Converting document
-        const convResult = await apiService.waitForConversion(result.fileId, (pct) => {
-          animateProgressTo(75 + Math.round(pct * 0.15)); // 75–90%
-        });
-        if (!convResult.success) throw new Error(convResult.error);
-      }
-
-      advanceStage(needsConversion(selectedFile.name || '') ? 5 : 4); // Finalizing
-      const displayName = needsConversion(fileName)
-        ? fileName.replace(/\.(docx|doc|pptx|ppt|xlsx|xls)$/i, '.pdf')
-        : fileName;
-      const encodedFilename = encodeURIComponent(displayName);
+      setStageLabel('Finalizing...');
+      const encodedFilename = encodeURIComponent(fileName);
       const frontendUrl = `https://one-tap-ten.vercel.app/view/${result.fileId}#key=${base64Key}&filename=${encodedFilename}`;
 
-      // Small delay so user sees 100%
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 400));
 
-      setGeneratedLink({ url: frontendUrl, fileName: displayName });
+      setGeneratedLink({ url: frontendUrl, fileName });
       setSelectedFile(null);
       Toast.show({ type: 'success', text1: 'Link ready!', text2: 'Your secure link is generated' });
     } catch (err) {
       Toast.show({ type: 'error', text1: 'Upload failed', text2: err.message });
-      progressAnim.setValue(0);
     } finally {
       if (encryptedUri) FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => {});
       setIsUploading(false);
-      setStageIndex(0);
+      setStageLabel('');
     }
   };
 
@@ -230,8 +256,6 @@ export default function UploadScreen() {
     }
   };
 
-  const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const currentStage = PROGRESS_STAGES[stageIndex] || PROGRESS_STAGES[0];
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -253,7 +277,7 @@ export default function UploadScreen() {
               </LinearGradient>
             </View>
             <Text style={styles.dropTitle}>{selectedFile ? selectedFile.name : 'Tap to select a file'}</Text>
-            <Text style={styles.dropSub}>{selectedFile ? formatFileSize(selectedFile.size) : 'Images, PDF, video, audio, DOCX, PPTX, XLSX · Max 100MB'}</Text>
+            <Text style={styles.dropSub}>{selectedFile ? formatFileSize(selectedFile.size) : 'Images, PDFs, video, audio · Max 100MB'}</Text>
             {selectedFile && (
               <View style={styles.fileSelectedBadge}>
                 <Ionicons name="checkmark-circle" size={16} color={COLORS.green} />
@@ -307,23 +331,8 @@ export default function UploadScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Progress bar while uploading */}
-        {isUploading && (
-          <View style={styles.progressSection}>
-            <View style={styles.progressHeader}>
-              <Text style={styles.progressLabel}>{currentStage.label}</Text>
-              <Animated.Text style={styles.progressPct}>
-                {currentStage.pct}%
-              </Animated.Text>
-            </View>
-            <View style={styles.progressTrack}>
-              <Animated.View style={[styles.progressFill, { width: progressWidth }]}>
-                <LinearGradient colors={[COLORS.purple, COLORS.purpleLight]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFill} />
-              </Animated.View>
-            </View>
-            <Text style={styles.progressSub}>Please keep the app open</Text>
-          </View>
-        )}
+        {/* Spinner while uploading */}
+        {isUploading && <UploadingSpinner stageLabel={stageLabel} />}
 
         {/* Generated link */}
         {generatedLink && (
@@ -440,14 +449,16 @@ const styles = StyleSheet.create({
   uploadBtnWrapper: { borderRadius: RADIUS.lg, overflow: 'hidden', marginBottom: 24 },
   uploadBtn: { paddingVertical: 16, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 10 },
   uploadBtnText: { color: '#fff', fontSize: SIZES.base, fontWeight: '700' },
-  // Progress
-  progressSection: { backgroundColor: 'rgba(124,58,237,0.1)', borderRadius: RADIUS.xl, padding: 20, borderWidth: 1, borderColor: 'rgba(124,58,237,0.3)', marginBottom: 24 },
-  progressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  progressLabel: { color: COLORS.textPrimary, fontSize: SIZES.sm, fontWeight: '600' },
-  progressPct: { color: COLORS.lavender, fontSize: SIZES.sm, fontWeight: '800' },
-  progressTrack: { height: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 4, overflow: 'hidden', marginBottom: 10 },
-  progressFill: { height: 8, borderRadius: 4 },
-  progressSub: { color: COLORS.textMuted, fontSize: SIZES.xs, textAlign: 'center' },
+  // Spinner
+  spinnerSection: { alignItems: 'center', paddingVertical: 36, paddingHorizontal: 24, marginBottom: 24 },
+  spinnerRingOuter: { width: 96, height: 96, alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
+  spinnerRing: { position: 'absolute', width: 96, height: 96, borderRadius: 48 },
+  spinnerGrad: { width: 96, height: 96, borderRadius: 48, borderWidth: 3, borderColor: 'transparent' },
+  spinnerCenter: { width: 72, height: 72, borderRadius: 36, overflow: 'hidden' },
+  spinnerCenterGrad: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
+  spinnerStageLabel: { color: COLORS.textPrimary, fontSize: SIZES.base, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  spinnerCaption: { color: COLORS.textSecondary, fontSize: SIZES.sm, textAlign: 'center', lineHeight: 22, marginBottom: 16, paddingHorizontal: 8 },
+  spinnerHint: { color: COLORS.textMuted, fontSize: SIZES.xs, textAlign: 'center' },
   // Link section
   linkSection: { backgroundColor: 'rgba(16,185,129,0.08)', borderRadius: RADIUS.xl, padding: 20, borderWidth: 1, borderColor: 'rgba(16,185,129,0.25)', marginBottom: 24 },
   linkHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
